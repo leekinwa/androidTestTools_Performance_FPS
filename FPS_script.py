@@ -66,7 +66,6 @@ def main():
     os.remove('./monkeyTest_UD.txt')
     os.remove('./monkeyTest_DU.txt')
     os.remove('./monkeyTest_LR.txt')
-    print u'monkeyScript生成完毕。'
 
 if __name__ == '__main__':
     main()

@@ -20,14 +20,33 @@ def getprocess(seek):
     # print processName
     return processName
 
+def gfx_switch_state():
+    get_gfxSwitch = os.popen('adb shell getprop debug.hwui.profile').read()
+    if 'true' in get_gfxSwitch or 'visual_bars' in get_gfxSwitch:
+        pass
+    else:
+        print u'无法获取帧率数据, 请打开“开发者选项-GPU呈现模式分析”开关, 脚本退出。'
+        exit()
+
+def get_vsync_time():
+    vsyncTime = 0
+    get_vsyncTime = os.popen('adb shell dumpsys SurfaceFlinger | grep refresh=').read().split(',')
+    for line in get_vsyncTime:
+        if 'refresh' in line:
+            vsyncTime = round(float(line.split('=')[1]) / 1000000, 2)
+    return vsyncTime
+
 # FPS计算（dumpsys gfxinfo）;
-def FPS_count():
+def FPS_count(vsyncTime):
     processName = getprocess(seek)
     # 获取gfxinfo的打印值, 如包名为;
     if 'StatusBar' in processName:
-        gfxinfo = os.popen( 'adb shell dumpsys gfxinfo com.android.systemui').readlines()
+        gfxinfo_command = 'adb shell dumpsys gfxinfo com.android.systemui'
     else:
-        gfxinfo = os.popen( 'adb shell dumpsys gfxinfo ' + processName ).readlines()
+        gfxinfo_command = 'adb shell dumpsys gfxinfo %s' %processName
+    os.popen(gfxinfo_command)
+    time.sleep(1)
+    gfxinfo = os.popen(gfxinfo_command).readlines()
     # 每帧耗时计算;
     frameList = []
     for gfxinfo_str in gfxinfo:
@@ -37,71 +56,70 @@ def FPS_count():
             for i in frame_1st_split:
                 frame_1st.append( float(i.replace( r'\t', '').replace( r'\r', '')) )
             frameList.append(sum(frame_1st))
-    if len(frameList) > 2:
+    if len(frameList) != 0:
         # 通过比例计算FPS
         jank_count = 0
         vsync_overtime = 0
         frame_count = len(frameList)
-        if frame_count != 0:
-            for frame_time in frameList:
-                    if frame_time > 16.67:
-                        jank_count += 1
-                        if frame_time % 16.67 == 0:
-                            vsync_overtime += int(frame_time / 16.67) - 1
-                        else:
-                            vsync_overtime += int(frame_time / 16.67)
-            fps = round(frame_count * 60.0 / (frame_count + vsync_overtime), 2)
-            return fps, jank_count, vsync_overtime, frame_count
-            # print fps
-            # print 'jank: ' + str(jank_count)
-            # print '垂直同步超时次数: ' + str(vsync_overtime)
-            # print '总帧数: ' + str(frame_count)
-    elif len(frameList) == 0:
-        print u'无法获取帧率数据, 请确保测试设备亮屏并且“开发者选项-GPU呈现模式分析”为打开状态, 脚本退出。'
-        exit()
+        for frame_time in frameList:
+                if frame_time > vsyncTime:
+                    jank_count += 1
+                    if frame_time % vsyncTime == 0:
+                        vsync_overtime += int(frame_time / vsyncTime) - 1
+                    else:
+                        vsync_overtime += int(frame_time / vsyncTime)
+        fps = round(frame_count * 60.0 / (frame_count + vsync_overtime), 2)
+        return fps, jank_count, vsync_overtime, frame_count
 
-def monkeyRun(operator, runCount):
-    if operator == 'UD' or operator == 'ud':
-        monkeyRun = subprocess.Popen('adb shell monkey -f /sdcard/monkeyTest_UD.txt ' + str(runCount), shell=True)
-    elif operator == 'DU' or operator == 'du':
-        monkeyRun = subprocess.Popen('adb shell monkey -f /sdcard/monkeyTest_DU.txt ' + str(runCount), shell=True)
-    else:
-        monkeyRun = subprocess.Popen('adb shell monkey -f /sdcard/monkeyTest_LR.txt ' + str(runCount), shell=True)
-    time.sleep(1)
-    fpsList = []
-    returncode = monkeyRun.poll()
-    while returncode is None:
-        FPS_count()
-        time.sleep(1)
-        fps, jank, vsync, frame_all = FPS_count()
-        fpsList.append(fps)
-        print u'FPS值: ', fps
-        print u'掉帧数: ', jank
-        print u'垂直同步区间数: ', vsync
-        print u'总帧数: ', frame_all
-        print '-------------------------------'
-        returncode = monkeyRun.poll()
-    fps_avg = round(sum(fpsList) / len(fpsList), 2)
-    print u'平均FPS值: ', fps_avg
-
-def main():
+def monkey_command():
+    monkeyCommand = ''
     usage = 'FPStest.py [-o <LR, UD, DU>][-c <count>]'
     # 参数解析;
     parser = OptionParser(usage)
-    # -o, operateType, 操作类型;
     parser.add_option('-o', dest = 'operateType', help = u'操作类型, LR左右滑动, UD上下滑动, DU下上滑动;')
-    # -c, count, 操作次数, 默认30次;
     parser.add_option('-c', dest = 'count', default = '30', help = u'操作次数, 默认30次;')
     (options, args) = parser.parse_args()
     operateType = options.operateType
     count = options.count
-
-    if operateType == 'LR' or operateType == 'lr' or operateType == 'DU' or operateType == 'du' or operateType == 'UD' or operateType == 'ud':
-        # print u'操作类型: ', operateType
-        # print u'操作次数: ', count
-        monkeyRun(operateType, count)
+    if operateType == 'UD' or operateType == 'ud':
+        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_UD.txt %s' %count
+    elif operateType == 'DU' or operateType == 'du':
+        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_DU.txt %s' %count
+    elif operateType == 'LR' or operateType == 'lr':
+        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_LR.txt %s' %count
     else:
         parser.print_help()
+        exit()
+    return monkeyCommand
+
+def monkey_run():
+    monkeyCommand = monkey_command()
+    gfx_switch_state()
+    vsyncTime = get_vsync_time()
+    monkeyRun = subprocess.Popen(monkeyCommand, shell = True)
+    time.sleep(1)
+    fps_list = []
+    jank_list = []
+    frame_all = []
+    returncode = monkeyRun.poll()
+    while returncode is None:
+        fps, jank, vsync, frame_count = FPS_count(vsyncTime)
+        fps_list.append(fps)
+        jank_list.append(jank)
+        frame_all.append(frame_count)
+        print u'FPS值:', fps
+        print u'掉帧数:', jank
+        print u'垂直同步超时区间:', vsync
+        print u'总帧数:', frame_count
+        print '-------------------------------'
+        returncode = monkeyRun.poll()
+    fps_avg = round(sum(fps_list) / len(fps_list), 2)
+    jank_percent = round(float(sum(jank_list)) / sum(frame_all) * 100, 2)
+    print u'平均FPS值:', fps_avg
+    print u'掉帧率: %s%%' %jank_percent
+
+def main():
+    monkey_run()
 
 if __name__ == '__main__':
     main()

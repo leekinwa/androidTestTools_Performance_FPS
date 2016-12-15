@@ -3,21 +3,27 @@
 import os, time
 
 
-def device():
-    os.system('adb kill-server')
-    time.sleep(1)
-    os.system('adb start-server')
-    time.sleep(2)
-    deviceText = os.popen('adb get-state').readline()
-    #print deviceText
-    if 'device' in deviceText:
-        print 'Script running. '
-    else:
-        print u'没连接设备或环境异常.'
+def wait_for_device():
+    device_exsit = ''
+    reTry = 0
+    while reTry < 10:
+        getDevices_command = 'adb get-state'
+        getDevices = os.popen(getDevices_command).readline()
+        if 'device' in getDevices:
+            device_exsit = True
+            break
+        else:
+            os.popen('adb -s kill-server')
+            time.sleep(2)
+            os.popen('adb -s start-server')
+            device_exsit = False
+            reTry += 1
+    if device_exsit == False:
+        print u'未识别到手机，请查看手机是否连接成功。'
         exit()
 
 def main():
-    device()
+    wait_for_device()
     fileHead =\
     '''type = user
     count = 10
@@ -35,7 +41,7 @@ def main():
     monkey_UD = 'Drag(' + str(x*0.5) + ', ' + str(y*0.8) + ', ' + str(x*0.5) + ', ' + str(y*0.3) + ',' + str(int(y*0.8 - y*0.2)/5) + ')\n'
     monkey_LR = 'Drag(' + str(x*0.2) + ', ' + str(y*0.5) + ', ' + str(x*0.8) + ', ' + str(y*0.5) + ',' + str(int(x*0.8 - x*0.2)/5) + ')\n'
     monkey_RL = 'Drag(' + str(x*0.8) + ', ' + str(y*0.5) + ', ' + str(x*0.2) + ', ' + str(y*0.5) + ',' + str(int(x*0.8 - x*0.2)/5) + ')\n'
-    print monkey_DU, monkey_UD
+    # print monkey_DU, monkey_UD
 
     # 列表超过300元素
     monkeyFile_UD = fileHead + monkey_UD *2 + monkey_DU *2

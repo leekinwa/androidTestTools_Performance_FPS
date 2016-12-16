@@ -13,9 +13,9 @@ def wait_for_device():
             device_exsit = True
             break
         else:
-            os.popen('adb -s kill-server')
+            os.popen('adb kill-server')
             time.sleep(2)
-            os.popen('adb -s start-server')
+            os.popen('adb start-server')
             device_exsit = False
             reTry += 1
     if device_exsit == False:

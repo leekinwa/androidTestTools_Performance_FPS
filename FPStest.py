@@ -9,84 +9,127 @@ if platform.system() == 'Windows':
 else:
     seek = 'grep'
 
-# 判断手机内是否有执行脚本, 如无则生成脚本;
-def setup():
+# 设置测试前提条件, 执行脚本、 开关状态等;
+def setup(method):
     scriptFiles_exist = os.popen('adb shell ls /sdcard/').read()
     if 'monkeyTest_UD.txt' not in scriptFiles_exist:
         FPS_script.main()
+    if method == 'gfx':
+        # 检查GPU呈现分析开关状态;
+        get_gfxSwitch = os.popen('adb shell getprop debug.hwui.profile').read()
+        if 'true' in get_gfxSwitch or 'visual_bars' in get_gfxSwitch:
+            print u'通过gfxinfo取值, 测试开始...\n'
+        else:
+            print u'无法获取帧率数据, 请打开“开发者选项-GPU呈现模式分析”开关, 脚本退出。'
+            exit()
+    else:
+        print u'通过surfaceFlinger取值, 测试开始...\n'
 
-# 获取包名函数;
+# 获取processName, windowName;
 def getprocess():
     getWindow = os.popen('adb shell dumpsys window | ' + seek + ' mCurrentFocus').readline().split()[-1]
     processName = getWindow.split(r'/')[0]
-    # print processName
-    return processName
-
-# 检查GPU呈现分析开关状态;
-def gfx_switch_state():
-    get_gfxSwitch = os.popen('adb shell getprop debug.hwui.profile').read()
-    if 'true' in get_gfxSwitch or 'visual_bars' in get_gfxSwitch:
-        setup()
-        print u'测试开始...\n'
-    else:
-        print u'无法获取帧率数据, 请打开“开发者选项-GPU呈现模式分析”开关, 脚本退出。'
-        exit()
+    windowName = getWindow[:-1]
+    return processName, windowName
 
 # 获取手机垂直同步时间;
-def get_vsync_time():
+def get_vsync_time(method):
     vsyncTime = 0
     get_vsyncTime_command = 'adb shell dumpsys SurfaceFlinger | %s refresh=' %seek
     get_vsyncTime = os.popen(get_vsyncTime_command).read().split(',')
     for line in get_vsyncTime:
         if 'refresh' in line:
-            vsyncTime = round(float(line.split('=')[1]) / 1000000, 2)
+            if method == 'gfx':
+                vsyncTime = round(float(line.split('=')[1]) / 1000000, 2)
+            else:
+                vsyncTime = round(float(line.split('=')[1]) / 1000000)
+    # print 'vsynTime:', vsyncTime
     return vsyncTime
 
-# FPS计算（dumpsys gfxinfo）;
-def FPS_count(vsyncTime):
-    processName = getprocess()
-    # 获取gfxinfo的打印值, 如包名为;
-    if 'StatusBar' in processName:
-        gfxinfo_command = 'adb shell dumpsys gfxinfo com.android.systemui'
+def FPS_data_collection(method):
+    processName, windowName = getprocess()
+    if method == 'gfx':
+        # 通过gfxinfo命令取值;
+        if 'StatusBar' in processName:
+            gfxinfo_command = 'adb shell dumpsys gfxinfo com.android.systemui'
+        else:
+            gfxinfo_command = 'adb shell dumpsys gfxinfo %s' %processName
+        os.popen(gfxinfo_command)
+        time.sleep(1)
+        gfxinfo = os.popen(gfxinfo_command).readlines()
+        # 每帧耗时计算;
+        frameList_gfx = []
+        for gfxinfo_str in gfxinfo:
+            frame_1st_split = re.findall( r'\d*\W\d\d[\t\r]', gfxinfo_str )
+            if len(frame_1st_split) > 1:
+                frame_1st = []
+                for i in frame_1st_split:
+                    frame_1st.append(float(i.replace( r'\t', '').replace( r'\r', '')))
+                frame_1st_time = round(sum(frame_1st), 2)
+                frameList_gfx.append(frame_1st_time)
+        # print frameList_gfx
+        return frameList_gfx
     else:
-        gfxinfo_command = 'adb shell dumpsys gfxinfo %s' %processName
-    os.popen(gfxinfo_command)
-    time.sleep(1)
-    gfxinfo = os.popen(gfxinfo_command).readlines()
-    # 每帧耗时计算;
-    frameList = []
-    for gfxinfo_str in gfxinfo:
-        frame_1st_split = re.findall( r'\d*\W\d\d[\t\r]', gfxinfo_str )
-        if len(frame_1st_split) > 1:
-            frame_1st = []
-            for i in frame_1st_split:
-                frame_1st.append(float(i.replace( r'\t', '').replace( r'\r', '')))
-            frame_1st_time = round(sum(frame_1st), 2)
-            frameList.append(frame_1st_time)
-    # 通过比例计算FPS
-    jank_count = 0
-    vsync_overtime = 0
+        # 通过surfaceFlinger命令取值;
+        surfaceFlinger_timeList = []
+        os.popen('adb shell dumpsys SurfaceFlinger --latency-clear')
+        time.sleep(1)
+        surfaceFlinger_all = os.popen('adb shell dumpsys SurfaceFlinger --latency ' + windowName).readlines()
+        for surface_line in surfaceFlinger_all[1:-1]:
+            # 过滤空值, 获取第二列的值;
+            if len(surface_line) > 10:
+                surfaceFlinger_timeList.append(surface_line.split()[1])
+        # 计算单帧耗时,第二列数据后一数据与前一数据的差;
+        framesList_surface = []
+        for i in range(len(surfaceFlinger_timeList)):
+            if i != len(surfaceFlinger_timeList) - 1:
+                timing = int(surfaceFlinger_timeList[i+1]) - int(surfaceFlinger_timeList[i])
+                # 纳秒换算毫秒;
+                framesTime = round(timing / 1000000.00, 2)
+                framesList_surface.append(framesTime)
+        # print framesList_surface
+        return framesList_surface
+
+# FPS计算;
+def FPS_count(method, vsyncTime):
+    frameList = FPS_data_collection(method)
     frame_count = len(frameList)
-    for frame_time in frameList:
-        if frame_time > vsyncTime:
-            jank_count += 1
-            if frame_time % vsyncTime == 0:
-                vsync_overtime += int(frame_time / vsyncTime) - 1
-            else:
-                vsync_overtime += int(frame_time / vsyncTime)
-    fps = round(frame_count * 60.0 / (frame_count + vsync_overtime), 2)
-    return fps, jank_count, vsync_overtime, frame_count
+    # frameList不为空, 进行运算;
+    if frame_count > 0:
+        jank_count = 0
+        vsync_overtime = 0
+        for frame_time in frameList:
+            if frame_time > vsyncTime:
+                jank_count += 1
+                if frame_time % vsyncTime == 0:
+                    vsync_overtime += int(frame_time / vsyncTime) - 1
+                else:
+                    vsync_overtime += int(frame_time / vsyncTime)
+        fps = round(frame_count * 60.0 / (frame_count + vsync_overtime), 2)
+        return fps, jank_count, vsync_overtime, frame_count
+    else:
+        print u'取值失败, 建议更换测试方法进行尝试。'
+        exit()
 
 def monkey_command():
     monkeyCommand = ''
-    usage = 'FPStest.py [-o <LR, UD, DU>][-c <count>]'
+    usage = 'FPStest.py [-o <LR, UD, DU>][-c <count>][-m <method>]'
     # 参数解析;
     parser = OptionParser(usage)
     parser.add_option('-o', dest = 'operateType', help = u'操作类型, LR左右滑动, UD上下滑动, DU下上滑动;')
     parser.add_option('-c', dest = 'count', default = '30', help = u'操作次数, 默认30次;')
+    parser.add_option('-m', dest = 'method', default = 'gfx', help = u'测试方法, gfx、surface, 默认为gfx;')
     (options, args) = parser.parse_args()
     operateType = options.operateType
     count = options.count
+    method = options.method
+    # 判断测试次数参数是否为数字类型;
+    try:
+        int(count)
+    except:
+        parser.print_help()
+        exit()
+    # 判断操作类型输入值;
     if operateType == 'UD' or operateType == 'ud':
         monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_UD.txt %s' %count
     elif operateType == 'DU' or operateType == 'du':
@@ -96,12 +139,19 @@ def monkey_command():
     else:
         parser.print_help()
         exit()
-    return monkeyCommand
+    # 判断测试方法输入值;
+    if method == 'gfx' or method == 'surface':
+        pass
+    else:
+        parser.print_help()
+        exit()
+    return monkeyCommand, method
 
 def monkey_run():
-    monkeyCommand = monkey_command()
-    gfx_switch_state()
-    vsyncTime = get_vsync_time()
+    # FPS_script.wait_for_device()
+    monkeyCommand, method = monkey_command()
+    setup(method)
+    vsyncTime = get_vsync_time(method)
     monkeyRun = subprocess.Popen(monkeyCommand, shell = True)
     time.sleep(1)
     fps_list = []
@@ -109,7 +159,7 @@ def monkey_run():
     frame_all = []
     returncode = monkeyRun.poll()
     while returncode is None:
-        fps, jank, vsync, frame_count = FPS_count(vsyncTime)
+        fps, jank, vsync, frame_count = FPS_count(method, vsyncTime)
         fps_list.append(fps)
         jank_list.append(jank)
         frame_all.append(frame_count)

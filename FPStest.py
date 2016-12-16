@@ -46,6 +46,42 @@ def get_vsync_time(method):
     # print 'vsynTime:', vsyncTime
     return vsyncTime
 
+def monkey_command():
+    monkeyCommand = ''
+    usage = 'FPStest.py [-o <LR, UD, DU>][-c <count>][-m <method>]'
+    # 参数解析;
+    parser = OptionParser(usage)
+    parser.add_option('-o', dest = 'operateType', help = u'操作类型, LR左右滑动, UD上下滑动, DU下上滑动;')
+    parser.add_option('-c', dest = 'count', default = '30', help = u'操作次数, 默认30次;')
+    parser.add_option('-m', dest = 'method', default = 'gfx', help = u'测试方法, gfx、surface, 默认为gfx;')
+    (options, args) = parser.parse_args()
+    operateType = options.operateType
+    count = options.count
+    method = options.method
+    # 判断测试次数参数是否为数字类型;
+    try:
+        int(count)
+    except:
+        parser.print_help()
+        exit()
+    # 判断操作类型输入值;
+    if operateType == 'UD' or operateType == 'ud':
+        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_UD.txt %s' %count
+    elif operateType == 'DU' or operateType == 'du':
+        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_DU.txt %s' %count
+    elif operateType == 'LR' or operateType == 'lr':
+        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_LR.txt %s' %count
+    else:
+        parser.print_help()
+        exit()
+    # 判断测试方法输入值;
+    if method == 'gfx' or method == 'surface':
+        pass
+    else:
+        parser.print_help()
+        exit()
+    return monkeyCommand, method
+
 def FPS_data_collection(method):
     processName, windowName = getprocess()
     if method == 'gfx':
@@ -107,48 +143,10 @@ def FPS_count(method, vsyncTime):
                     vsync_overtime += int(frame_time / vsyncTime)
         fps = round(frame_count * 60.0 / (frame_count + vsync_overtime), 2)
         return fps, jank_count, vsync_overtime, frame_count
-    else:
-        print u'取值失败, 建议更换测试方法进行尝试。'
-        exit()
-
-def monkey_command():
-    monkeyCommand = ''
-    usage = 'FPStest.py [-o <LR, UD, DU>][-c <count>][-m <method>]'
-    # 参数解析;
-    parser = OptionParser(usage)
-    parser.add_option('-o', dest = 'operateType', help = u'操作类型, LR左右滑动, UD上下滑动, DU下上滑动;')
-    parser.add_option('-c', dest = 'count', default = '30', help = u'操作次数, 默认30次;')
-    parser.add_option('-m', dest = 'method', default = 'gfx', help = u'测试方法, gfx、surface, 默认为gfx;')
-    (options, args) = parser.parse_args()
-    operateType = options.operateType
-    count = options.count
-    method = options.method
-    # 判断测试次数参数是否为数字类型;
-    try:
-        int(count)
-    except:
-        parser.print_help()
-        exit()
-    # 判断操作类型输入值;
-    if operateType == 'UD' or operateType == 'ud':
-        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_UD.txt %s' %count
-    elif operateType == 'DU' or operateType == 'du':
-        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_DU.txt %s' %count
-    elif operateType == 'LR' or operateType == 'lr':
-        monkeyCommand = 'adb shell monkey -f /sdcard/monkeyTest_LR.txt %s' %count
-    else:
-        parser.print_help()
-        exit()
-    # 判断测试方法输入值;
-    if method == 'gfx' or method == 'surface':
-        pass
-    else:
-        parser.print_help()
-        exit()
-    return monkeyCommand, method
 
 def monkey_run():
     # FPS_script.wait_for_device()
+    retry = 0
     monkeyCommand, method = monkey_command()
     setup(method)
     vsyncTime = get_vsync_time(method)
@@ -159,15 +157,21 @@ def monkey_run():
     frame_all = []
     returncode = monkeyRun.poll()
     while returncode is None:
-        fps, jank, vsync, frame_count = FPS_count(method, vsyncTime)
-        fps_list.append(fps)
-        jank_list.append(jank)
-        frame_all.append(frame_count)
-        print u'FPS值:', fps
-        print u'掉帧数:', jank
-        print u'垂直同步超时区间:', vsync
-        print u'总帧数:', frame_count
-        print '-------------------------------'
+        try:
+            fps, jank, vsync, frame_count = FPS_count(method, vsyncTime)
+            fps_list.append(fps)
+            jank_list.append(jank)
+            frame_all.append(frame_count)
+            print u'FPS值:', fps
+            print u'掉帧数:', jank
+            print u'垂直同步超时区间:', vsync
+            print u'总帧数:', frame_count
+            print '-------------------------------'
+        except:
+            retry += 1
+            if retry == 3:
+                print u'取值失败, 建议更换测试方法进行尝试。'
+                exit()
         returncode = monkeyRun.poll()
     fps_avg = round(sum(fps_list) / len(fps_list), 2)
     jank_percent = round(float(sum(jank_list)) / sum(frame_all) * 100, 2)
